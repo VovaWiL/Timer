@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBS Timer — timate.ru/timer</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter & JetBrains Mono для ровных цифр -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700;800;900&family=JetBrains+Mono:wght@700;800&display=swap" rel="stylesheet">
+  <style>
+    /* Прозрачный фон по умолчанию для OBS Browser Source */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: transparent;
+      font-family: 'Inter', sans-serif;
+      user-select: none;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Шахматная сетка только для режима предпросмотра в браузере (выключается в OBS) */
+    body.preview-grid {
+      background-color: #0f1117;
+      background-image: 
+        linear-gradient(45deg, #181b24 25%, transparent 25%), 
+        linear-gradient(-45deg, #181b24 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #181b24 75%), 
+        linear-gradient(-45deg, transparent 75%, #181b24 75%);
+      background-size: 28px 28px;
+      background-position: 0 0, 0 14px, 14px -14px, -14px 0;
+    }
+
+    /* Стили цифр таймера: строго по центру и моноширинные цифры (tabular-nums), чтобы не дергались */
+    #timer-display {
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+      line-height: 1;
+      letter-spacing: -0.02em;
+      font-weight: 800;
+      /* Адаптивный размер под любое окно OBS */
+      font-size: clamp(3rem, 13vw, 16rem);
+      transition: color 0.15s ease;
+    }
+
+    /* Анимация пульсации по окончании таймера */
+    @keyframes timerDonePulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.97); }
+    }
+
+    .timer-finished {
+      animation: timerDonePulse 1.2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="flex items-center justify-center relative">
+
+  <!-- ГЛАВНЫЙ ЭЛЕМЕНТ: Цифры таймера строго по центру экрана -->
+  <main class="w-full h-full flex items-center justify-center p-4">
+    <div id="timer-display" style="color: #ffffff;">00:00:00</div>
+  </main>
+
+  <!-- Незаметная кнопка в углу для возврата панели конструктора (видна только при наведении мыши) -->
+  <button
+    id="show-ui-btn"
+    title="Открыть настройки ссылки"
+    class="hidden fixed top-4 right-4 z-40 opacity-0 hover:opacity-100 focus:opacity-100 transition-opacity duration-200 bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 text-xs font-medium px-3 py-2 rounded-lg border border-zinc-700/80 shadow-lg backdrop-blur-md"
+  >
+    ⚙️ Настроить хэш
+  </button>
+
+  <!-- ПАНЕЛЬ ПРОВЕРКИ И ГЕНЕРАЦИИ ССЫЛКИ (Автоматически скрыта, если открыта готовая ссылка с # в OBS) -->
+  <aside
+    id="config-panel"
+    class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-2xl bg-zinc-900/95 text-zinc-100 border border-zinc-700/80 rounded-2xl shadow-2xl p-4 sm:p-5 backdrop-blur-xl transition-all duration-200"
+  >
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <h2 class="text-sm sm:text-base font-bold tracking-tight text-white">
+          Тест и генератор ссылки <span class="text-zinc-400 font-normal">timate.ru/timer</span>
+        </h2>
+      </div>
+      <div class="flex items-center gap-2">
+        <button
+          id="toggle-bg-btn"
+          type="button"
+          class="text-xs px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition"
+        >
+          Фон: Сетка
+        </button>
+        <button
+          id="hide-ui-btn"
+          type="button"
+          class="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition shadow"
+        >
+          Только цифры (Режим OBS)
+        </button>
+      </div>
+    </div>
+
+    <!-- Поле прямого ввода хэша -->
+    <div class="space-y-3">
+      <div>
+        <label for="hash-input" class="block text-xs text-zinc-400 mb-1">
+          Параметры URL после домена (<code class="text-zinc-200">#ВРЕМЯ#ЦВЕТ</code>):
+        </label>
+        <div class="flex flex-col sm:flex-row gap-2">
+          <div class="flex-1 flex items-center bg-zinc-950 border border-zinc-700 focus-within:border-indigo-500 rounded-xl px-3 py-2">
+            <span class="text-zinc-500 text-sm select-none hidden sm:inline">timate.ru/timer</span>
+            <input
+              id="hash-input"
+              type="text"
+              value="#1d4h2m7s#FFA3af"
+              placeholder="#1d4h2m7s#FFA3af"
+              class="w-full bg-transparent text-sm sm:text-base text-white font-mono focus:outline-none"
+            />
+          </div>
+          <button
+            id="copy-btn"
+            type="button"
+            class="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-zinc-100 text-sm font-medium border border-zinc-600/80 transition whitespace-nowrap"
+          >
+            Скопировать ссылку
+          </button>
+        </div>
+      </div>
+
+      <!-- Быстрые примеры форматов -->
+      <div class="flex flex-wrap items-center gap-1.5 pt-1">
+        <span class="text-xs text-zinc-400 mr-1">Примеры:</span>
+        <button type="button" data-preset="#1d4h2m7s#FFA3af" class="preset-btn text-xs font-mono px-2.5 py-1 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-pink-300 border border-zinc-700 transition">
+          #1d4h2m7s#FFA3af
+        </button>
+        <button type="button" data-preset="#1d4h2m7s##00F5D4" class="preset-btn text-xs font-mono px-2.5 py-1 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-teal-300 border border-zinc-700 transition">
+          #1d4h2m7s##00F5D4
+        </button>
+        <button type="button" data-preset="#2h15m30s#rgb(255,200,50)" class="preset-btn text-xs font-mono px-2.5 py-1 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-amber-300 border border-zinc-700 transition">
+          #2h15m30s#rgb(255,200,50)
+        </button>
+        <button type="button" data-preset="#45m10s#120,180,255" class="preset-btn text-xs font-mono px-2.5 py-1 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-sky-300 border border-zinc-700 transition">
+          #45m10s#120,180,255
+        </button>
+        <button type="button" data-preset="#10s#ff4d4d" class="preset-btn text-xs font-mono px-2.5 py-1 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-red-400 border border-zinc-700 transition">
+          #10s#ff4d4d
+        </button>
+      </div>
+
+      <p class="text-[11px] text-zinc-400 leading-relaxed">
+        💡 <strong>Как это работает в OBS:</strong> когда вы вставляете ссылку вида
+        <code class="text-zinc-300">https://timate.ru/timer#1d4h2m7s#FFA3af</code> в источник <em>Браузер (Browser Source)</em>, эта панель управления автоматически не отображается, а фон становится полностью прозрачным.
+      </p>
+    </div>
+  </aside>
+
+  <script>
+    (function () {
+      const timerDisplay = document.getElementById('timer-display');
+      const configPanel = document.getElementById('config-panel');
+      const showUiBtn = document.getElementById('show-ui-btn');
+      const hideUiBtn = document.getElementById('hide-ui-btn');
+      const toggleBgBtn = document.getElementById('toggle-bg-btn');
+      const hashInput = document.getElementById('hash-input');
+      const copyBtn = document.getElementById('copy-btn');
+      const presetBtns = document.querySelectorAll('.preset-btn');
+
+      let countdownInterval = null;
+      let targetTimestamp = 0;
+      let showDaysInFormat = false;
+      let showHoursInFormat = true;
+
+      /**
+       * Парсит строку времени вида "1d4h2m7s", "15m30s", "2h", "90s" или просто число секунд.
+       * Поддерживает как английские (d, h, m, s), так и русские (д, ч, м, с) буквы.
+       */
+      function parseDurationToSeconds(timeStr) {
+        if (!timeStr) return { totalSeconds: 0, hasDays: false, hasHours: false };
+
+        const cleaned = decodeURIComponent(timeStr).trim().toLowerCase();
+
+        // Если передано просто число (например #120#FFA3af) — считаем это секундами
+        if (/^\d+$/.test(cleaned)) {
+          const secs = parseInt(cleaned, 10);
+          return {
+            totalSeconds: secs,
+            hasDays: secs >= 86400,
+            hasHours: secs >= 3600
+          };
+        }
+
+        let days = 0;
+        let hours = 0;
+        let minutes = 0;
+        let seconds = 0;
+        let matchedAny = false;
+
+        // Регулярное выражение для поиска пар "число + единица измерения"
+        const regex = /(\d+)\s*(d|д|h|ч|m|м|s|с)/g;
+        let match;
+
+        while ((match = regex.exec(cleaned)) !== null) {
+          matchedAny = true;
+          const value = parseInt(match[1], 10);
+          const unit = match[2];
+
+          if (unit === 'd' || unit === 'д') days += value;
+          else if (unit === 'h' || unit === 'ч') hours += value;
+          else if (unit === 'm' || unit === 'м') minutes += value;
+          else if (unit === 's' || unit === 'с') seconds += value;
+        }
+
+        if (!matchedAny) {
+          return { totalSeconds: 0, hasDays: false, hasHours: false };
+        }
+
+        const totalSeconds = (days * 86400) + (hours * 3600) + (minutes * 60) + seconds;
+        return {
+          totalSeconds,
+          hasDays: days > 0 || totalSeconds >= 86400,
+          hasHours: days > 0 || hours > 0 || totalSeconds >= 3600
+        };
+      }
+
+      /**
+       * Парсит строку цвета:
+       * - HEX без решетки: "FFA3af" -> "#FFA3af"
+       * - HEX с решеткой: "#FFA3af" -> "#FFA3af"
+       * - RGB через запятую: "255, 163, 175" -> "rgb(255, 163, 175)"
+       * - Стандартный rgb(...) / rgba(...) или именованный цвет ("red", "gold")
+       */
+      function parseColorString(rawColor) {
+        if (!rawColor) return '#ffffff';
+
+        let color = decodeURIComponent(rawColor).trim();
+        // Убираем лишние символы # в начале, если написали ##FFA3af
+        color = color.replace(/^#+/, '');
+
+        if (!color) return '#ffffff';
+
+        // Проверка на HEX (3, 4, 6 или 8 символов 0-9a-f)
+        if (/^[0-9a-fA-F]{3,8}$/.test(color)) {
+          return '#' + color;
+        }
+
+        // Проверка на формат "255,0,128" или "255, 163, 175"
+        if (/^\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*[\d.]+)?$/.test(color)) {
+          const parts = color.split(',');
+          return parts.length === 4 ? `rgba(${color})` : `rgb(${color})`;
+        }
+
+        // Проверка на rgb(...) / rgba(...) / hsl(...) или стандартные CSS-имена цветов
+        return color;
+      }
+
+      /**
+       * Разбирает хэш вида:
+       * #1d4h2m7s#FFA3af
+       * #1d4h2m7s##FFA3af
+       * #1d4h2m7s#rgb(255,0,0)
+       * #1d4h2m7s#255,0,0
+       */
+      function parseHashString(hashStr) {
+        const clean = (hashStr || '').trim().replace(/^#+/, '');
+        if (!clean) {
+          return {
+            timePart: '1d4h2m7s',
+            colorPart: 'FFA3af'
+          };
+        }
+
+        // Разделяем по первому символу # после времени (учитывая случай ##FFA3af)
+        const firstHashIndex = clean.indexOf('#');
+        if (firstHashIndex === -1) {
+          return {
+            timePart: clean,
+            colorPart: 'ffffff'
+          };
+        }
+
+        const timePart = clean.slice(0, firstHashIndex).trim();
+        const colorPart = clean.slice(firstHashIndex + 1).trim();
+
+        return {
+          timePart,
+          colorPart
+        };
+      }
+
+      /**
+       * Форматирует оставшиеся секунды в читаемый вид:
+       * - Если есть дни: ДД:ЧЧ:ММ:СС (или Д:ЧЧ:ММ:СС)
+       * - Если есть часы: ЧЧ:ММ:СС
+       * - Если только минуты/секунды: ММ:СС
+       */
+      function formatSeconds(remainingSeconds) {
+        const sec = Math.max(0, Math.floor(remainingSeconds));
+
+        const days = Math.floor(sec / 86400);
+        const hours = Math.floor((sec % 86400) / 3600);
+        const minutes = Math.floor((sec % 3600) / 60);
+        const seconds = sec % 60;
+
+        const pad2 = (n) => String(n).padStart(2, '0');
+
+        if (showDaysInFormat || days > 0) {
+          return `${pad2(days)}:${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+        }
+        if (showHoursInFormat || hours > 0) {
+          return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+        }
+        return `${pad2(minutes)}:${pad2(seconds)}`;
+      }
+
+      /**
+       * Запускает или перезапускает таймер на основе строки хэша
+       */
+      function applyTimerFromHash(hashString) {
+        if (countdownInterval) {
+          clearInterval(countdownInterval);
+          countdownInterval = null;
+        }
+
+        timerDisplay.classList.remove('timer-finished');
+
+        const { timePart, colorPart } = parseHashString(hashString);
+        const { totalSeconds, hasDays, hasHours } = parseDurationToSeconds(timePart);
+        const cssColor = parseColorString(colorPart);
+
+        showDaysInFormat = hasDays;
+        showHoursInFormat = hasHours;
+
+        // Применяем цвет цифр
+        timerDisplay.style.color = cssColor;
+
+        // Вычисляем время окончания через Date.now(), чтобы таймер не отставал в фоновой вкладке/OBS
+        targetTimestamp = Date.now() + totalSeconds * 1000;
+
+        const updateTick = () => {
+          const now = Date.now();
+          const diffSeconds = Math.ceil((targetTimestamp - now) / 1000);
+
+          if (diffSeconds <= 0) {
+            timerDisplay.textContent = formatSeconds(0);
+            timerDisplay.classList.add('timer-finished');
+            if (countdownInterval) {
+              clearInterval(countdownInterval);
+              countdownInterval = null;
+            }
+            return;
+          }
+
+          timerDisplay.textContent = formatSeconds(diffSeconds);
+        };
+
+        updateTick();
+        countdownInterval = setInterval(updateTick, 200);
+      }
+
+      /**
+       * Включает чистый режим для OBS (скрывает все панели и убирает фон)
+       */
+      function enterPureObsMode() {
+        configPanel.classList.add('hidden');
+        showUiBtn.classList.remove('hidden');
+        document.body.classList.remove('preview-grid');
+        toggleBgBtn.textContent = 'Фон: Прозрачный';
+      }
+
+      /**
+       * Показывает панель конструктора
+       */
+      function showConfigPanel() {
+        configPanel.classList.remove('hidden');
+        showUiBtn.classList.add('hidden');
+      }
+
+      // Слушаем изменения хэша в адресной строке браузера / OBS
+      window.addEventListener('hashchange', () => {
+        const currentHash = window.location.hash;
+        if (currentHash) {
+          hashInput.value = currentHash;
+          applyTimerFromHash(currentHash);
+        }
+      });
+
+      // Обновление на лету при вводе в текстовое поле конструктора
+      hashInput.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        const formattedHash = val.startsWith('#') ? val : '#' + val;
+        applyTimerFromHash(formattedHash);
+        try {
+          history.replaceState(null, '', formattedHash);
+        } catch (err) {
+          // Игнорируем ограничения истории в iframe
+        }
+      });
+
+      // Кнопки быстрых пресетов
+      presetBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const preset = btn.getAttribute('data-preset');
+          hashInput.value = preset;
+          applyTimerFromHash(preset);
+          try {
+            history.replaceState(null, '', preset);
+          } catch (err) {}
+        });
+      });
+
+      // Переключение сетки/прозрачности фона
+      toggleBgBtn.addEventListener('click', () => {
+        document.body.classList.toggle('preview-grid');
+        const hasGrid = document.body.classList.contains('preview-grid');
+        toggleBgBtn.textContent = hasGrid ? 'Фон: Сетка' : 'Фон: Прозрачный';
+      });
+
+      // Скрыть/показать интерфейс
+      hideUiBtn.addEventListener('click', enterPureObsMode);
+      showUiBtn.addEventListener('click', showConfigPanel);
+
+      // Копирование готовой ссылки для OBS
+      copyBtn.addEventListener('click', () => {
+        const rawVal = hashInput.value.trim();
+        const normalizedHash = rawVal.startsWith('#') ? rawVal : '#' + rawVal;
+        const fullUrl = `https://timate.ru/timer${normalizedHash}`;
+
+        const tempInput = document.createElement('textarea');
+        tempInput.value = fullUrl;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = 'Скопировано!';
+        setTimeout(() => {
+          copyBtn.textContent = originalText;
+        }, 1500);
+      });
+
+      // Инициализация при загрузке
+      window.addEventListener('DOMContentLoaded', () => {
+        const initialHash = window.location.hash;
+
+        if (initialHash && initialHash.length > 1) {
+          // Если страница открыта сразу с хэшем (например, в OBS Browser Source: timate.ru/timer#1d4h2m7s#FFA3af)
+          // Сразу скрываем все панели и оставляем 100% прозрачный фон и цифры по центру
+          hashInput.value = initialHash;
+          enterPureObsMode();
+          applyTimerFromHash(initialHash);
+        } else {
+          // Если открыта без хэша (для настройки в браузере или в превью) — показываем демо #1d4h2m7s#FFA3af
+          document.body.classList.add('preview-grid');
+          const defaultHash = '#1d4h2m7s#FFA3af';
+          hashInput.value = defaultHash;
+          applyTimerFromHash(defaultHash);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
